@@ -1,0 +1,465 @@
+import React, { useState, useMemo } from "react";
+import {
+  Users,
+  Lightbulb,
+  HeartHandshake,
+  Heart,
+  TrendingUp,
+  Copy,
+  Save,
+  FileDown,
+  Share2,
+  Search,
+  Sparkles,
+  Building2,
+} from "lucide-react";
+
+const PILARES = [
+  { id: "uniao", label: "União", sub: "Fortalecer o time", icon: Users },
+  { id: "solucao", label: "Solução", sub: "Postura proativa", icon: Lightbulb },
+  { id: "colaboracao", label: "Colaboração", sub: "Apoiar o coletivo", icon: HeartHandshake },
+  { id: "interesse", label: "Interesse", sub: "Engajamento genuíno", icon: Heart },
+  { id: "evolucao", label: "Evolução", sub: "Crescimento contínuo", icon: TrendingUp },
+];
+
+const CLASSIFICACOES = [
+  "Abaixo do esperado",
+  "Dentro do esperado",
+  "Acima do esperado",
+  "Destaque (alto potencial)",
+];
+
+const SYSTEM_PROMPT = `Você é um especialista em Desenvolvimento Humano Organizacional, apoiando gestores a estruturar devolutivas de desempenho humanizadas e objetivas.
+
+Sua tarefa é transformar as informações brutas de um formulário em DOIS blocos de texto:
+1. "plus": os pontos fortes e comportamentos a serem reconhecidos e mantidos
+2. "delta": as oportunidades de desenvolvimento e mudanças esperadas, com tom construtivo e de apoio
+
+REGRAS OBRIGATÓRIAS:
+- NUNCA copie ou apenas reorganize as frases originais do usuário — reformule e enriqueça o conteúdo
+- Conecte o comportamento observado ao pilar cultural informado, explicando por que ele representa esse pilar em ação
+- Baseie-se apenas nas informações fornecidas — elabore o raciocínio, não invente fatos novos
+- "plus": tom de reconhecimento genuíno, 2-3 frases
+- "delta": tom de apoio e cuidado, focado em crescimento, nunca punitivo, 2-3 frases
+- Responda APENAS em JSON válido, sem markdown, sem texto fora do JSON, no formato exato:
+{"plus": "texto aqui", "delta": "texto aqui"}`;
+
+export default function FeedbackContinuo() {
+  const [tab, setTab] = useState("gerar");
+  const [pilar, setPilar] = useState("colaboracao");
+  const [classificacao, setClassificacao] = useState(CLASSIFICACOES[1]);
+  const [form, setForm] = useState({
+    colaborador: "",
+    gestor: "",
+    data: "",
+    contexto: "",
+    comportamento: "",
+    impacto: "",
+  });
+  const [acordos, setAcordos] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState("");
+  const [resultado, setResultado] = useState(null); // { plus, delta }
+  const [copiado, setCopiado] = useState(false);
+  const [compartilhado, setCompartilhado] = useState(false);
+  const [historico, setHistorico] = useState([]);
+  const [busca, setBusca] = useState("");
+
+  const pilarAtual = PILARES.find((p) => p.id === pilar);
+
+  const podeGerar =
+    form.colaborador.trim() && form.gestor.trim() && form.comportamento.trim() && form.impacto.trim();
+
+  function setField(campo, valor) {
+    setForm((f) => ({ ...f, [campo]: valor }));
+  }
+
+  function textoCompleto(r, acordosTexto) {
+    return `Classificação do nível de potencial e desempenho: ${classificacao}\n\nPlus:\n${r.plus}\n\nDelta:\n${r.delta}\n\nAcordamos que:\n${acordosTexto || "-"}`;
+  }
+
+  async function gerarFeedback() {
+    setLoading(true);
+    setErro("");
+    setResultado(null);
+    setCopiado(false);
+    setCompartilhado(false);
+    setAcordos("");
+
+    const userPrompt = `Colaborador: ${form.colaborador}
+Gestor: ${form.gestor}
+Data do ocorrido: ${form.data || "não informada"}
+Contexto/demanda: ${form.contexto || "não informado"}
+Comportamento observado: ${form.comportamento}
+Impacto gerado: ${form.impacto}
+Pilar relacionado: ${pilarAtual.label}
+Classificação do nível de potencial e desempenho: ${classificacao}`;
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 500,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userPrompt }],
+        }),
+      });
+      const data = await response.json();
+      const texto = data?.content?.find((b) => b.type === "text")?.text?.trim();
+      if (!texto) throw new Error("Resposta vazia");
+      const limpo = texto.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(limpo);
+      if (!parsed.plus || !parsed.delta) throw new Error("Formato inesperado");
+      setResultado(parsed);
+    } catch (e) {
+      setErro("Não foi possível gerar a devolutiva agora. Tente novamente.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copiar() {
+    if (!resultado) return;
+    navigator.clipboard?.writeText(textoCompleto(resultado, acordos)).catch(() => {});
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 2000);
+  }
+
+  function salvarHistorico() {
+    if (!resultado) return;
+    setHistorico((h) => [
+      {
+        id: Date.now(),
+        colaborador: form.colaborador,
+        gestor: form.gestor,
+        data: form.data,
+        pilar,
+        classificacao,
+        plus: resultado.plus,
+        delta: resultado.delta,
+        acordos,
+      },
+      ...h,
+    ]);
+    setTab("historico");
+  }
+
+  function exportarPDF() {
+    window.print();
+  }
+
+  function compartilhar() {
+    if (!resultado) return;
+    const texto = `Devolutiva de ${form.colaborador}\n\n${textoCompleto(resultado, acordos)}`;
+    if (navigator.share) {
+      navigator.share({ title: "Devolutiva", text: texto }).catch(() => {});
+    } else {
+      navigator.clipboard?.writeText(texto).catch(() => {});
+      setCompartilhado(true);
+      setTimeout(() => setCompartilhado(false), 2000);
+    }
+  }
+
+  const historicoFiltrado = useMemo(() => {
+    if (!busca.trim()) return historico;
+    const q = busca.trim().toLowerCase();
+    return historico.filter(
+      (h) =>
+        h.colaborador.toLowerCase().includes(q) ||
+        h.gestor.toLowerCase().includes(q) ||
+        h.plus.toLowerCase().includes(q) ||
+        h.delta.toLowerCase().includes(q)
+    );
+  }, [historico, busca]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex justify-center py-8 px-4">
+      <div className="w-full max-w-3xl">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center">
+            <Building2 size={20} />
+          </div>
+          <div>
+            <p className="font-semibold text-slate-800 leading-tight">Desenvolvimento Humano Organizacional</p>
+            <p className="text-sm text-slate-500 leading-tight">Devolutiva de desempenho</p>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 mb-6 bg-white border border-slate-200 rounded-lg p-1 w-fit">
+          <button
+            onClick={() => setTab("gerar")}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+              tab === "gerar" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Gerar devolutiva
+          </button>
+          <button
+            onClick={() => setTab("historico")}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+              tab === "historico" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Histórico
+          </button>
+        </div>
+
+        {tab === "gerar" ? (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+            {/* 1. Pilar */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 tracking-wide mb-3">1. PILAR RELACIONADO</p>
+              <div className="grid grid-cols-5 gap-2">
+                {PILARES.map((p) => {
+                  const Icon = p.icon;
+                  const ativo = pilar === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setPilar(p.id)}
+                      className={`flex flex-col items-center gap-1.5 rounded-lg border px-2 py-3 text-center transition ${
+                        ativo
+                          ? "border-blue-400 bg-blue-50 ring-1 ring-blue-300"
+                          : "border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <Icon size={18} className={ativo ? "text-blue-600" : "text-slate-400"} />
+                      <span className={`text-xs font-medium ${ativo ? "text-blue-700" : "text-slate-700"}`}>
+                        {p.label}
+                      </span>
+                      <span className="text-[10px] text-slate-400 leading-tight">{p.sub}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Classificação */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 tracking-wide mb-3">
+                2. CLASSIFICAÇÃO DO NÍVEL DE POTENCIAL E DESEMPENHO
+              </p>
+              <select
+                value={classificacao}
+                onChange={(e) => setClassificacao(e.target.value)}
+                className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+              >
+                {CLASSIFICACOES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 3. Detalhes */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 tracking-wide mb-3">3. DETALHES DA SITUAÇÃO</p>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Nome do colaborador</label>
+                  <input
+                    value={form.colaborador}
+                    onChange={(e) => setField("colaborador", e.target.value)}
+                    placeholder="Ex: Sara Fernanda"
+                    className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Nome do gestor</label>
+                  <input
+                    value={form.gestor}
+                    onChange={(e) => setField("gestor", e.target.value)}
+                    placeholder="Ex: Carlos Andrade"
+                    className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Quando aconteceu?</label>
+                  <input
+                    value={form.data}
+                    onChange={(e) => setField("data", e.target.value)}
+                    placeholder="Ex: na reunião do dia 20"
+                    className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Contexto / demanda</label>
+                  <input
+                    value={form.contexto}
+                    onChange={(e) => setField("contexto", e.target.value)}
+                    placeholder="Ex: atendimento ao cliente XPTO"
+                    className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                  />
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <label className="text-xs text-slate-500 mb-1 block">O que aconteceu?</label>
+                <textarea
+                  value={form.comportamento}
+                  onChange={(e) => setField("comportamento", e.target.value)}
+                  rows={2}
+                  placeholder="Descreva o comportamento observado"
+                  className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Qual foi o impacto?</label>
+                <textarea
+                  value={form.impacto}
+                  onChange={(e) => setField("impacto", e.target.value)}
+                  rows={2}
+                  placeholder="Descreva o resultado gerado"
+                  className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 resize-none"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={gerarFeedback}
+              disabled={!podeGerar || loading}
+              className="flex items-center justify-center gap-2 w-fit px-5 py-2.5 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              <Sparkles size={16} />
+              {loading ? "Gerando..." : "Gerar devolutiva"}
+            </button>
+
+            {erro && <p className="text-sm text-red-600">{erro}</p>}
+
+            {resultado && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded">
+                    {pilarAtual.label.toUpperCase()}
+                  </span>
+                  <span className="text-xs font-semibold text-slate-700 bg-slate-200 px-2 py-0.5 rounded">
+                    {classificacao}
+                  </span>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 tracking-wide mb-1">CLASSIFICAÇÃO DO NÍVEL DE POTENCIAL E DESEMPENHO</p>
+                  <p className="text-sm text-slate-700">{classificacao}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-blue-700 tracking-wide mb-1">PLUS</p>
+                  <p className="text-sm text-slate-700 leading-relaxed">{resultado.plus}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-amber-700 tracking-wide mb-1">DELTA</p>
+                  <p className="text-sm text-slate-700 leading-relaxed">{resultado.delta}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 tracking-wide mb-1">ACORDAMOS QUE</p>
+                  <textarea
+                    value={acordos}
+                    onChange={(e) => setAcordos(e.target.value)}
+                    rows={3}
+                    placeholder="Registre aqui os acordos definidos durante a conversa"
+                    className="w-full text-sm rounded-md border border-slate-200 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 resize-none"
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    onClick={copiar}
+                    className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                  >
+                    <Copy size={13} /> {copiado ? "Copiado!" : "Copiar"}
+                  </button>
+                  <button
+                    onClick={salvarHistorico}
+                    className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                  >
+                    <Save size={13} /> Salvar no histórico
+                  </button>
+                  <button
+                    onClick={exportarPDF}
+                    className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                  >
+                    <FileDown size={13} /> Exportar PDF
+                  </button>
+                  <button
+                    onClick={compartilhar}
+                    className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                  >
+                    <Share2 size={13} /> {compartilhado ? "Copiado para compartilhar" : "Compartilhar"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="bg-white border border-slate-200 rounded-xl p-6">
+            <div className="relative mb-5">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar devolutivas anteriores por colaborador, gestor ou conteúdo"
+                className="w-full text-sm rounded-md border border-slate-200 pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+              />
+            </div>
+
+            {historicoFiltrado.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-10">
+                {historico.length === 0
+                  ? "Nenhuma devolutiva salva ainda. Gere e salve uma para vê-la aqui."
+                  : "Nenhum resultado encontrado para essa busca."}
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {historicoFiltrado.map((h) => {
+                  const p = PILARES.find((x) => x.id === h.pilar);
+                  return (
+                    <div key={h.id} className="border border-slate-200 rounded-lg p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">{h.colaborador}</p>
+                          <p className="text-xs text-slate-400">
+                            Gestor: {h.gestor} {h.data && `· ${h.data}`}
+                          </p>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <span className="text-[10px] font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded">
+                            {p.label.toUpperCase()}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-700 bg-slate-200 px-2 py-0.5 rounded">
+                            {h.classificacao}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        <span className="font-semibold text-blue-700">Plus: </span>
+                        {h.plus}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        <span className="font-semibold text-amber-700">Delta: </span>
+                        {h.delta}
+                      </p>
+                      {h.acordos && (
+                        <p className="text-xs text-slate-600">
+                          <span className="font-semibold text-slate-700">Acordamos que: </span>
+                          {h.acordos}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
